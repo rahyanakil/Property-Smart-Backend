@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BUYER
+  AGENT
+  ADMIN
+}
+
+enum PropertyType {
+  HOUSE
+  APARTMENT
+  CONDO
+  TOWNHOUSE
+  LAND
+  COMMERCIAL
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  PENDING
+  SOLD
+  RENTED
+  INACTIVE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  password     String?
+  name         String
+  role         Role     @default(BUYER)
+  avatar       String?
+  phone        String?
+  bio          String?
+  googleId     String?  @unique
+  githubId     String?  @unique
+  isVerified   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  refreshToken String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  properties Property[] @relation("AgentProperties")
+  bookings   Booking[]  @relation("BuyerBookings")
+  favorites  Favorite[]
+  reviews    Review[]
+  payments   Payment[]
+
+  @@map("users")
+}
+
+model Property {
+  id          String         @id @default(cuid())
+  title       String
+  description String
+  price       Float
+  type        PropertyType   @default(HOUSE)
+  status      PropertyStatus @default(AVAILABLE)
+  address     String
+  city        String
+  state       String
+  zipCode     String
+  country     String         @default("US")
+  lat         Float?
+  lng         Float?
+  bedrooms    Int            @default(0)
+  bathrooms   Float          @default(0)
+  area        Float
+  features    String[]
+  images      String[]
+  videoUrl    String?
+  isFeatured  Boolean        @default(false)
+  viewCount   Int            @default(0)
+  agentId     String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  agent     User       @relation("AgentProperties", fields: [agentId], references: [id])
+  bookings  Booking[]
+  favorites Favorite[]
+  reviews   Review[]
+  payments  Payment[]
+
+  @@map("properties")
+}
+
+model Booking {
+  id         String        @id @default(cuid())
+  propertyId String
+  buyerId    String
+  date       DateTime
+  timeSlot   String
+  status     BookingStatus @default(PENDING)
+  notes      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+  buyer    User     @relation("BuyerBookings", fields: [buyerId], references: [id])
+
+  @@map("bookings")
+}
+
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  propertyId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id])
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@unique([userId, propertyId])
+  @@map("favorites")
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  propertyId String
+  userId     String
+  rating     Int
+  comment    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([propertyId, userId])
+  @@map("reviews")
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  buyerId               String
+  propertyId            String
+  amount                Float
+  currency              String        @default("usd")
+  stripePaymentIntentId String?       @unique
+  stripeClientSecret    String?
+  status                PaymentStatus @default(PENDING)
+  metadata              Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  buyer    User     @relation(fields: [buyerId], references: [id])
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@map("payments")
+}
