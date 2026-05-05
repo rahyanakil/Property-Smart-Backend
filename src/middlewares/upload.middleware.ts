@@ -8,7 +8,7 @@ const fileFilter = (_req: Express.Request, file: Express.Multer.File, cb: multer
   if (allowed.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new ApiError(400, 'Only JPEG, PNG, and WebP images are allowed') as unknown as null, false);
+    cb(new ApiError(400, 'Only JPEG, PNG, and WebP images are allowed'));
   }
 };
 

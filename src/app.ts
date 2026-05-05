@@ -30,7 +30,8 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
-// Health check
+// Root + health check
+app.get('/', (_req, res) => res.json({ status: 'ok', message: 'PropertySmart API', version: '1.0.0', endpoints: '/api/v1' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // API Routes
