@@ -168,8 +168,19 @@ async function main() {
     },
   ];
 
-  // Clear existing properties first to avoid duplicates on re-seed
-  await prisma.property.deleteMany({ where: { agentId: agent.id } });
+  // Delete dependents first to avoid FK constraint violations on re-seed
+  const agentPropertyIds = await prisma.property
+    .findMany({ where: { agentId: agent.id }, select: { id: true } })
+    .then((rows) => rows.map((r) => r.id));
+
+  if (agentPropertyIds.length > 0) {
+    const where = { propertyId: { in: agentPropertyIds } };
+    await prisma.favorite.deleteMany({ where });
+    await prisma.review.deleteMany({ where });
+    await prisma.payment.deleteMany({ where });
+    await prisma.booking.deleteMany({ where });
+    await prisma.property.deleteMany({ where: { agentId: agent.id } });
+  }
 
   for (const prop of properties) {
     await prisma.property.create({ data: { ...prop, agentId: agent.id } });
