@@ -21,16 +21,18 @@ export const verifyAccessToken = (token: string): JwtPayload =>
 export const verifyRefreshToken = (token: string): JwtPayload =>
   jwt.verify(token, config.jwt.refreshSecret) as JwtPayload;
 
+const isProd = process.env.NODE_ENV === 'production';
+
 export const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
 export const refreshCookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   maxAge: 30 * 24 * 60 * 60 * 1000,
 };
