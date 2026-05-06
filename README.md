@@ -1,6 +1,6 @@
 # PropertySmart — Backend API
 
-Express 5 REST API with TypeScript, Prisma ORM, Neon PostgreSQL, Stripe payments, Cloudinary image storage, and JWT cookie authentication. Deployed as a Vercel serverless function.
+Express 5 REST API powering the PropertySmart real estate marketplace. Handles authentication with a dual cookie + Bearer token strategy, property CRUD with Cloudinary image hosting, Stripe payments, Neon PostgreSQL via Prisma, and deploys as a Vercel serverless function.
 
 ---
 
@@ -8,15 +8,15 @@ Express 5 REST API with TypeScript, Prisma ORM, Neon PostgreSQL, Stripe payments
 
 | | |
 |---|---|
-| Runtime | Node.js 20 · TypeScript 5 |
-| Framework | Express 5 |
-| ORM | Prisma 5 |
-| Database | Neon PostgreSQL (serverless) |
-| Auth | JWT (httpOnly cookies) · bcryptjs |
-| File uploads | Multer (memory) → Cloudinary |
-| Payments | Stripe |
-| Validation | Zod |
-| Deployment | Vercel serverless (`api/index.ts`) |
+| **Runtime** | Node.js 20 · TypeScript 5 |
+| **Framework** | Express 5 |
+| **ORM** | Prisma 5 |
+| **Database** | Neon PostgreSQL (serverless, pooler endpoint) |
+| **Auth** | JWT httpOnly cookies + `Authorization: Bearer` header · bcryptjs |
+| **File uploads** | Multer (memory storage, 5 MB) → Cloudinary |
+| **Payments** | Stripe |
+| **Validation** | Zod |
+| **Deployment** | Vercel serverless (`api/index.ts`) |
 
 ---
 
@@ -25,35 +25,41 @@ Express 5 REST API with TypeScript, Prisma ORM, Neon PostgreSQL, Stripe payments
 ```
 property-backend/
 ├── api/
-│   └── index.ts            Vercel entry — exports Express app
+│   └── index.ts                Vercel serverless entry — imports app, exports as default
 ├── prisma/
-│   └── schema.prisma       Models: User Property Booking Favorite Review Payment
+│   └── schema.prisma           Models + enums
+├── vercel.json                 Routes all traffic to api/index.ts
 └── src/
     ├── config/
-    │   └── index.ts        Typed env config
+    │   └── index.ts            Single typed config object — reads all env vars
     ├── lib/
-    │   ├── prisma.ts       Singleton PrismaClient
-    │   ├── cloudinary.ts   uploadImage / deleteImage helpers
-    │   └── seed.ts         Demo accounts + Bangladesh properties
+    │   ├── prisma.ts           Singleton PrismaClient (cached on globalThis in dev)
+    │   ├── cloudinary.ts       uploadImage(buffer, folder) · deleteImage(publicId)
+    │   └── seed.ts             Demo users + Bangladesh properties (safe to re-run)
     ├── middlewares/
-    │   ├── auth.middleware.ts    authenticate · authorize(roles)
-    │   ├── validate.middleware.ts Zod schema validation
-    │   ├── upload.middleware.ts   Multer (5 MB, images only)
-    │   └── error.middleware.ts    notFound · errorHandler
+    │   ├── auth.middleware.ts  authenticate · authorize(...roles)
+    │   ├── validate.middleware.ts  validate(zodSchema, source?) — 422 on failure
+    │   ├── upload.middleware.ts    Multer: memory storage · 5 MB · images only
+    │   └── error.middleware.ts    notFound (404) · errorHandler (converts ApiError → JSON)
     ├── modules/
-    │   ├── auth/            register · login · logout · refresh · me · OAuth
-    │   ├── user/            profile · password · avatar · favorites · admin
-    │   ├── property/        CRUD · search · filters · stats · images
-    │   ├── booking/         create · list (buyer/agent/admin) · updateStatus
-    │   ├── payment/         intent · webhook · list · stats
-    │   └── review/          create · list · delete
+    │   ├── auth/
+    │   │   ├── auth.routes.ts
+    │   │   ├── auth.controller.ts
+    │   │   ├── auth.service.ts
+    │   │   └── auth.schema.ts
+    │   ├── user/               profile · password · avatar · favorites · admin user mgmt
+    │   ├── property/           CRUD · search · filters · image management · stats
+    │   ├── booking/            create · list (buyer/agent/admin) · status transitions
+    │   ├── payment/            Stripe intent · webhook · history · stats
+    │   └── review/             nested under /properties/:propertyId/reviews
     ├── utils/
-    │   ├── ApiError.ts      throw new ApiError(status, message)
-    │   ├── ApiResponse.ts   { success, message, data } shape
-    │   ├── asyncHandler.ts  Wraps async route handlers
-    │   └── jwt.ts           sign · verify · cookieOptions
-    ├── app.ts               Express app (CORS · body parsing · routes)
-    └── server.ts            Local dev server (app.listen)
+    │   ├── ApiError.ts         class ApiError extends Error { statusCode; errors? }
+    │   ├── ApiResponse.ts      new ApiResponse(status, data, message)
+    │   ├── asyncHandler.ts     (fn) => (req, res, next) => fn(req,res,next).catch(next)
+    │   └── jwt.ts              signAccessToken · signRefreshToken · verify helpers
+    │                           cookieOptions · refreshCookieOptions (env-aware sameSite)
+    ├── app.ts                  Express setup: CORS · body parsing · routes · error handlers
+    └── server.ts               Local dev only — app.listen, DB connect, SIGTERM handler
 ```
 
 ---
@@ -62,8 +68,9 @@ property-backend/
 
 ### 1 — Install
 
+Run from the **repo root** (npm workspaces):
+
 ```bash
-# From repo root (npm workspaces)
 npm install
 ```
 
@@ -74,28 +81,32 @@ cp .env.example .env
 ```
 
 ```env
-# Database (Neon connection string — use the -pooler endpoint)
-DATABASE_URL="postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/db?sslmode=require&connect_timeout=15&pool_timeout=15&connection_limit=5"
+# ── Database ──────────────────────────────────────────────────────────────
+# Use the Neon -pooler endpoint. Adding connection params prevents "Closed" errors.
+DATABASE_URL="postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/db?sslmode=require&channel_binding=require&connect_timeout=15&pool_timeout=15&connection_limit=5"
 
-# Server
+# ── Server ─────────────────────────────────────────────────────────────────
 PORT=5000
+# MUST be 'development' locally — 'production' disables the Prisma singleton
+# and hot-reload creates new DB connections on every file change.
 NODE_ENV=development
 
-# JWT (min 32 chars each, must be different)
-JWT_SECRET=your_super_secret_jwt_key_at_least_32_chars
+# ── JWT ───────────────────────────────────────────────────────────────────
+JWT_SECRET=at_least_32_random_characters_here
 JWT_EXPIRES_IN=7d
-JWT_REFRESH_SECRET=your_super_secret_refresh_key_at_least_32
+JWT_REFRESH_SECRET=different_32_random_characters_here
 JWT_REFRESH_EXPIRES_IN=30d
 
-# CORS — frontend origin, no trailing slash
+# ── CORS ──────────────────────────────────────────────────────────────────
+# No trailing slash — browsers send Origin without one.
 CLIENT_URL=http://localhost:3000
 
-# Cloudinary
+# ── Cloudinary ────────────────────────────────────────────────────────────
 CLOUDINARY_CLOUD_NAME=xxx
 CLOUDINARY_API_KEY=xxx
 CLOUDINARY_API_SECRET=xxx
 
-# Stripe
+# ── Stripe ────────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
@@ -104,8 +115,8 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 ### 3 — Database
 
 ```bash
-npm run db:push      # push schema to Neon (no migration history)
-npm run db:generate  # regenerate Prisma client after schema changes
+npm run db:push      # push schema to Neon (no migration files created)
+npm run db:generate  # regenerate Prisma client
 npm run db:seed      # seed demo accounts + Bangladesh sample properties
 ```
 
@@ -119,206 +130,327 @@ npm run dev    # tsx watch — hot reload on :5000
 
 ## Scripts
 
-| Script | Description |
-|---|---|
-| `npm run dev` | `tsx watch src/server.ts` — hot reload |
-| `npm run build` | `tsc` → `dist/` |
-| `npm run start` | `node dist/server.js` |
-| `npm run db:push` | Sync schema to DB (no migration files) |
-| `npm run db:migrate` | Create Prisma migration files |
-| `npm run db:generate` | Regenerate Prisma client |
-| `npm run db:seed` | Seed demo data |
-| `npm run db:studio` | Open Prisma Studio at localhost:5555 |
-| `npm run lint` | ESLint on `src/` |
-| `postinstall` | `prisma generate` — auto-runs on Vercel after `npm install` |
+| Script | Command | Description |
+|---|---|---|
+| `dev` | `tsx watch src/server.ts` | Hot-reload development server |
+| `build` | `tsc` | Compile TypeScript → `dist/` |
+| `start` | `node dist/server.js` | Run compiled output |
+| `db:push` | `prisma db push` | Sync schema to DB without migration history |
+| `db:migrate` | `prisma migrate dev` | Create migration files |
+| `db:generate` | `prisma generate` | Regenerate Prisma client after schema changes |
+| `db:seed` | `tsx src/lib/seed.ts` | Seed demo data (safe to re-run) |
+| `db:studio` | `prisma studio` | Open Prisma Studio at localhost:5555 |
+| `lint` | `eslint src --ext .ts` | Lint TypeScript source |
+| `postinstall` | `prisma generate` | Auto-runs on Vercel after `npm install` |
 
 ---
 
 ## Request Lifecycle
 
 ```
-Router
-  → validate(zodSchema)        — Zod parse req.body / req.query
-  → authenticate               — verify JWT from cookie or Authorization header
-  → authorize('ROLE', ...)     — role check
-  → controller                 — parse, call service, return ApiResponse
-  → service                    — business logic + Prisma queries
+HTTP Request
+  → Express Router
+  → validate(zodSchema)          parse + coerce req.body or req.query (422 on failure)
+  → authenticate                 read token from cookie → Authorization header → 401
+  → authorize('ROLE', ...)       role check → 403
+  → controller                   thin: parse params, call service, return ApiResponse
+  → service                      business logic + Prisma queries
+  → Prisma → Neon PostgreSQL
 ```
 
-**Error flow:** throw `new ApiError(statusCode, message)` anywhere → caught by `errorHandler` middleware → JSON `{ success: false, message, errors? }`.
-
----
-
-## API Routes
-
-All routes are prefixed `/api/v1`.
-
-### Auth — `/auth`
-
-```
-POST   /register          Create account (body: name, email, password, role?)
-POST   /login             Login → sets accessToken + refreshToken cookies
-POST   /logout            Clear cookies
-POST   /refresh           Rotate both tokens
-GET    /me                Current user (authenticate required)
-GET    /oauth/:provider/callback   Google/GitHub OAuth (mock)
-```
-
-### Properties — `/properties`
-
-```
-GET    /                  List (public) — filters: type, status, city, state,
-                          minPrice, maxPrice, minBedrooms, search, isFeatured,
-                          sortBy, sortOrder, page, limit
-GET    /featured          Featured available listings
-GET    /stats             Platform stats (Admin)
-GET    /my                Agent's own listings (Agent/Admin)
-GET    /:id               Detail (public, increments viewCount)
-POST   /                  Create (Agent/Admin) — multipart/form-data
-PATCH  /:id               Update (Agent/Admin) — multipart/form-data
-DELETE /:id               Delete (Agent/Admin)
-DELETE /:id/images        Remove specific image by URL (Agent/Admin)
-```
-
-### Bookings — `/bookings`
-
-```
-POST   /                  Create viewing request (Buyer)
-GET    /my                Buyer's bookings
-GET    /agent             Bookings for agent's properties
-GET    /admin             All bookings (Admin)
-PATCH  /:id               Update status: CONFIRMED | COMPLETED | CANCELLED
-```
-
-### Payments — `/payments`
-
-```
-POST   /intent            Create Stripe PaymentIntent (Buyer)
-GET    /my                Buyer's payment history
-GET    /                  All payments (Admin)
-GET    /stats             Revenue statistics (Admin)
-POST   /webhook           Stripe webhook — raw body, no JSON middleware
-```
-
-### Users — `/users`
-
-```
-GET    /profile           Own profile
-PATCH  /profile           Update profile (name, phone, bio)
-PATCH  /password          Change password
-POST   /avatar            Upload avatar (multipart/form-data)
-GET    /favorites         Saved properties (Buyer)
-POST   /favorites/:propertyId  Toggle favorite (Buyer)
-GET    /                  All users (Admin)
-PATCH  /:id/role          Change role (Admin)
-PATCH  /:id/status        Toggle active/inactive (Admin)
-```
-
-### Reviews — `/properties/:propertyId/reviews`
-
-```
-GET    /                  List reviews (public)
-POST   /                  Create review — rating + comment (Buyer)
-DELETE /:id               Delete review (Buyer owns it, or Admin)
-```
-
-### Health
-
-```
-GET    /        { status: "ok", message: "PropertySmart API", version: "1.0.0" }
-GET    /health  { status: "ok", timestamp: "..." }
-```
+Errors anywhere in the chain: `throw new ApiError(statusCode, message)` → caught by `errorHandler` → JSON `{ success: false, message, errors? }`.
 
 ---
 
 ## Authentication
 
-JWT tokens are stored in **httpOnly cookies**:
+### Dual auth strategy
 
-| Cookie | Expiry | Used for |
+The backend accepts tokens via **two channels** in priority order:
+
+1. **`req.cookies.accessToken`** — httpOnly cookie (works on same-origin / localhost via Next.js proxy)
+2. **`req.headers.authorization`** — `Bearer <token>` header (works cross-origin on Vercel, bypasses third-party cookie restrictions)
+
+```typescript
+// auth.middleware.ts
+const token = req.cookies?.accessToken || req.headers.authorization?.replace('Bearer ', '');
+```
+
+### Token response
+
+Login, register, and refresh all return tokens in **both** cookies **and** the JSON body:
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": { ... },
+    "accessToken": "eyJ...",
+    "refreshToken": "eyJ..."
+  }
+}
+```
+
+The frontend stores these in `localStorage` and sends them as `Authorization: Bearer` headers. This is the reliable path in production where cross-origin cookies are blocked by browsers.
+
+### Cookie flags
+
+| `NODE_ENV` | `secure` | `sameSite` |
 |---|---|---|
-| `accessToken` | 7 days | All authenticated requests |
-| `refreshToken` | 30 days | `POST /auth/refresh` rotation |
+| `development` | `false` | `lax` |
+| `production` | `true` | `none` |
 
-**Cookie flags:**
+`sameSite: none` requires `secure: true` (HTTPS). Vercel provides HTTPS automatically.
 
-| Environment | `secure` | `sameSite` |
-|---|---|---|
-| Development | `false` | `lax` |
-| Production | `true` | `none` |
+### Refresh flow
 
-`sameSite: 'none'` + `secure: true` is required for cross-origin cookies between Vercel frontend and backend deployments.
+`POST /auth/refresh` reads the refresh token from:
+1. `req.cookies.refreshToken` (cookie path)
+2. `req.body.refreshToken` (body path — used when cookies are blocked cross-origin)
 
-The `authenticate` middleware reads the token from `req.cookies.accessToken` first, then falls back to the `Authorization: Bearer <token>` header.
+### Logout
 
----
-
-## File Uploads
-
-- **Middleware:** Multer with memory storage, 5 MB limit, images only (`image/jpeg`, `image/png`, `image/webp`)
-- **Storage:** Cloudinary via `uploadImage(buffer, folder)` in `src/lib/cloudinary.ts`
-- **Folders:** `'properties'` for property images · `'property-smart'` for avatars
-- **Limits:** Properties accept up to 10 images; avatar accepts 1
+`clearCookie` must use the **same** `sameSite`/`secure` flags the cookie was set with, otherwise browsers silently ignore the clear instruction.
 
 ---
 
 ## CORS
 
-Allowed origins:
-- `CLIENT_URL` env var (explicit frontend URL)
-- `http://localhost:3000` and `http://localhost:3001` (local dev)
-- Any `*.vercel.app` origin (Vercel preview deployments)
-- Requests with no `Origin` header (server-to-server, curl)
+```typescript
+const allowedOrigins = [
+  config.clientUrl,           // CLIENT_URL env var
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
+origin: (origin, callback) => {
+  if (!origin) return callback(null, true);          // server-to-server / curl
+  if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app'))
+    return callback(null, true);                     // Vercel preview deployments
+  callback(new Error(`CORS: ${origin} not allowed`));
+}
+```
+
+---
+
+## API Routes
+
+All routes prefixed `/api/v1`.
+
+### Auth — `/auth`
+
+```
+POST   /register     { name, email, password, role? }
+                     → 201 { user, accessToken, refreshToken } + cookies
+POST   /login        { email, password }
+                     → 200 { user, accessToken, refreshToken } + cookies
+POST   /logout       (authenticate) → clears cookies, invalidates refresh token
+POST   /refresh      { refreshToken? } or via cookie
+                     → 200 { accessToken, refreshToken } + cookies
+GET    /me           (authenticate) → current user profile
+GET    /oauth/:provider/callback  → mock OAuth, sets cookies, redirects
+```
+
+### Properties — `/properties`
+
+```
+GET    /             Public. Filter params: type, status, city, state, minPrice, maxPrice,
+                     minBedrooms, minBathrooms, minArea, maxArea, search, isFeatured,
+                     agentId, sortBy, sortOrder, page, limit
+GET    /featured     Public. Returns up to 6 isFeatured=true, status=AVAILABLE properties
+GET    /stats        Admin. Total, available, pending, sold counts + recent
+GET    /my           Agent/Admin. Agent's own listings with pagination
+GET    /:id          Public. Increments viewCount. Includes agent, reviews, counts
+POST   /             Agent/Admin. multipart/form-data. Up to 10 images.
+                     All numeric/boolean fields are coerced from form strings.
+PATCH  /:id          Agent/Admin. multipart/form-data. All fields optional.
+DELETE /:id          Agent/Admin. Deletes property + Cloudinary images
+DELETE /:id/images   Agent/Admin. { imageUrl } — removes one image from Cloudinary + DB
+```
+
+### Bookings — `/bookings`
+
+```
+POST   /             Buyer.  { propertyId, date, timeSlot, notes? }
+GET    /my           Buyer.  Buyer's bookings, paginated
+GET    /agent        Agent.  Bookings for agent's properties
+GET    /admin        Admin.  All bookings
+PATCH  /:id          Agent/Buyer. { status: CONFIRMED | COMPLETED | CANCELLED }
+```
+
+### Payments — `/payments`
+
+```
+POST   /intent       Buyer.  { propertyId, amount } → Stripe PaymentIntent
+GET    /my           Buyer.  Buyer's payment history, paginated
+GET    /             Admin.  All payments, paginated
+GET    /stats        Admin.  Revenue totals, counts by status
+POST   /webhook      No JSON middleware — raw body for Stripe signature verification
+```
+
+### Users — `/users`
+
+```
+GET    /profile              (authenticate) own profile
+PATCH  /profile              (authenticate) { name?, phone?, bio? }
+PATCH  /password             (authenticate) { currentPassword, newPassword }
+POST   /avatar               (authenticate) multipart/form-data, single image
+GET    /favorites            Buyer. Array of { id, propertyId, property }
+POST   /favorites/:propertyId  Buyer. Toggle — creates if absent, deletes if present
+GET    /                     Admin. { search?, role?, page?, limit? }
+PATCH  /:id/role             Admin. { role: BUYER | AGENT | ADMIN }
+PATCH  /:id/status           Admin. Toggles isActive
+```
+
+### Reviews — `/properties/:propertyId/reviews`
+
+```
+GET    /             Public. Property reviews with user info
+POST   /             Buyer. { rating: 1-5, comment }
+DELETE /:id          Buyer (own review) or Admin
+```
+
+### Health
+
+```
+GET    /        → { status: "ok", message: "PropertySmart API", version: "1.0.0" }
+GET    /health  → { status: "ok", timestamp: "ISO string" }
+```
+
+---
+
+## Validation Notes
+
+Property create/update uses `multipart/form-data`, so all text fields arrive as strings. The Zod schema uses `z.coerce` for numeric fields and `z.preprocess` for booleans and arrays:
+
+```typescript
+price:      z.coerce.number().positive()
+bedrooms:   z.coerce.number().int().min(0).default(0)
+isFeatured: z.preprocess(v => v === 'true' || v === true, z.boolean()).default(false)
+features:   z.preprocess(v => Array.isArray(v) ? v : v ? [v] : [], z.array(z.string()))
+```
+
+---
+
+## File Uploads
+
+- **Middleware:** `upload.middleware.ts` — Multer memory storage, 5 MB limit, `image/jpeg` + `image/png` + `image/webp` only
+- **Storage:** Cloudinary via `lib/cloudinary.ts`
+  - `uploadImage(buffer, folder)` — uploads and returns `{ url, publicId }`
+  - `deleteImage(publicId)` — removes from Cloudinary
+- **Folders:** `'properties'` for listing images · `'property-smart'` for avatars
+- **Limits:** Up to 10 images per property · 1 avatar per user
 
 ---
 
 ## Vercel Deployment
 
-The `api/index.ts` file exports the Express app as a default export. `vercel.json` routes all traffic to it:
+### How it works
 
-```json
-{
-  "version": 2,
-  "builds": [{ "src": "api/index.ts", "use": "@vercel/node" }],
-  "routes": [{ "src": "/(.*)", "dest": "/api/index.ts" }]
-}
+```
+api/index.ts  →  imports Express app  →  exports as default
+vercel.json   →  { "src": "api/index.ts", "use": "@vercel/node" }
+              →  routes all /* to api/index.ts
 ```
 
-The `postinstall` script runs `prisma generate` automatically after every `npm install` on Vercel, keeping the Prisma client in sync with the schema.
+`@vercel/node` compiles TypeScript directly — no `tsc` build step needed on Vercel.
+
+The `postinstall` script (`prisma generate`) runs automatically after every `npm install`, keeping the Prisma client in sync with the schema even with Vercel's dependency caching.
+
+### Required environment variables
+
+```
+DATABASE_URL        Use the -pooler Neon endpoint with connection params
+NODE_ENV            production
+JWT_SECRET          min 32 chars
+JWT_REFRESH_SECRET  min 32 chars (different from JWT_SECRET)
+CLIENT_URL          https://your-frontend.vercel.app  (no trailing slash)
+CLOUDINARY_CLOUD_NAME
+CLOUDINARY_API_KEY
+CLOUDINARY_API_SECRET
+STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET
+```
 
 ---
 
 ## Database Schema
 
+```prisma
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  password     String
+  name         String
+  role         Role      @default(BUYER)
+  avatar       String?
+  phone        String?
+  bio          String?
+  googleId     String?   @unique
+  githubId     String?   @unique
+  isVerified   Boolean   @default(false)
+  isActive     Boolean   @default(true)
+  refreshToken String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  properties   Property[]
+  bookings     Booking[]
+  favorites    Favorite[]
+  reviews      Review[]
+  payments     Payment[]
+}
+
+model Property {
+  id          String         @id @default(cuid())
+  title       String
+  description String
+  price       Float
+  type        PropertyType
+  status      PropertyStatus @default(AVAILABLE)
+  address     String
+  city        String
+  state       String
+  zipCode     String
+  country     String         @default("Bangladesh")
+  lat         Float?
+  lng         Float?
+  bedrooms    Int            @default(0)
+  bathrooms   Float          @default(0)
+  area        Float
+  features    String[]
+  images      String[]
+  videoUrl    String?
+  isFeatured  Boolean        @default(false)
+  viewCount   Int            @default(0)
+  agentId     String
+  agent       User           @relation(fields: [agentId], references: [id])
+  bookings    Booking[]
+  favorites   Favorite[]
+  reviews     Review[]
+  payments    Payment[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
 ```
-User          id · email · password · name · role · avatar · phone · bio
-              googleId · githubId · isVerified · isActive · refreshToken
 
-Property      id · title · description · price · type · status
-              address · city · state · zipCode · country · lat · lng
-              bedrooms · bathrooms · area · features[] · images[]
-              videoUrl · isFeatured · viewCount · agentId
+After any schema change:
 
-Booking       id · propertyId · buyerId · date · timeSlot · status · notes
-
-Favorite      id · userId · propertyId
-
-Review        id · propertyId · userId · rating · comment
-
-Payment       id · propertyId · buyerId · amount · currency · status
-              stripePaymentIntentId · stripeClientSecret
+```bash
+npm run db:push      # dev (no migration history)
+npm run db:migrate   # production (creates migration files)
+npm run db:generate  # always run after schema changes
 ```
-
-**Enums:** `Role` (BUYER, AGENT, ADMIN) · `PropertyType` · `PropertyStatus` · `BookingStatus` · `PaymentStatus`
 
 ---
 
-## Demo Data
+## Seed Data
 
-The seed script (`src/lib/seed.ts`) creates:
+`src/lib/seed.ts` creates:
 
-- 3 demo accounts (admin, agent, buyer)
-- ~15 Bangladesh properties across Dhaka, Chattogram, Sylhet with BDT prices
-- Prices in lakh/crore range (displayed via `formatPrice()` on the frontend)
+- **3 demo users** — admin, agent, buyer
+- **~15 Bangladesh properties** in Dhaka, Chattogram, and Sylhet with BDT prices in lakh/crore range
+- **Safe to re-run** — deletes all dependent records (favorites, reviews, payments, bookings) before deleting and re-inserting agent properties, satisfying FK constraints
 
-Re-running the seed safely deletes the agent's previous properties and all related records (favorites, bookings, reviews, payments) before re-inserting.
+```bash
+npm run db:seed
+```

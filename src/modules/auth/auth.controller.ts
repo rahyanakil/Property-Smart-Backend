@@ -19,7 +19,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     .cookie('accessToken', accessToken, cookieOptions)
     .cookie('refreshToken', refreshToken, refreshCookieOptions)
     .status(201)
-    .json(new ApiResponse(201, { user, accessToken }, 'Registration successful'));
+    .json(new ApiResponse(201, { user, accessToken, refreshToken }, 'Registration successful'));
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
@@ -28,14 +28,15 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     .cookie('accessToken', accessToken, cookieOptions)
     .cookie('refreshToken', refreshToken, refreshCookieOptions)
     .status(200)
-    .json(new ApiResponse(200, { user, accessToken }, 'Login successful'));
+    .json(new ApiResponse(200, { user, accessToken, refreshToken }, 'Login successful'));
 });
 
 export const logout = asyncHandler(async (req: AuthRequest, res: Response) => {
   if (req.user) await logoutUser(req.user.userId);
+  const clearOpts = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: (process.env.NODE_ENV === 'production' ? 'none' : 'lax') as 'none' | 'lax' };
   res
-    .clearCookie('accessToken')
-    .clearCookie('refreshToken')
+    .clearCookie('accessToken', clearOpts)
+    .clearCookie('refreshToken', clearOpts)
     .json(new ApiResponse(200, null, 'Logged out successfully'));
 });
 
@@ -47,7 +48,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   res
     .cookie('accessToken', accessToken, cookieOptions)
     .cookie('refreshToken', refreshToken, refreshCookieOptions)
-    .json(new ApiResponse(200, { accessToken }, 'Token refreshed'));
+    .json(new ApiResponse(200, { accessToken, refreshToken }, 'Token refreshed'));
 });
 
 export const getMe = asyncHandler(async (req: AuthRequest, res: Response) => {
