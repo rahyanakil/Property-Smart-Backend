@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const createPropertySchema = z.object({
   title: z.string().min(5).max(200),
   description: z.string().min(20),
-  price: z.number().positive(),
+  price: z.coerce.number().positive(),
   type: z.enum(['HOUSE', 'APARTMENT', 'CONDO', 'TOWNHOUSE', 'LAND', 'COMMERCIAL']).default('HOUSE'),
   status: z.enum(['AVAILABLE', 'PENDING', 'SOLD', 'RENTED', 'INACTIVE']).default('AVAILABLE'),
   address: z.string().min(5),
@@ -11,14 +11,19 @@ export const createPropertySchema = z.object({
   state: z.string().min(2),
   zipCode: z.string().min(3),
   country: z.string().default('US'),
-  lat: z.number().optional(),
-  lng: z.number().optional(),
-  bedrooms: z.number().int().min(0).default(0),
-  bathrooms: z.number().min(0).default(0),
-  area: z.number().positive(),
-  features: z.array(z.string()).default([]),
+  lat: z.coerce.number().optional(),
+  lng: z.coerce.number().optional(),
+  bedrooms: z.coerce.number().int().min(0).default(0),
+  bathrooms: z.coerce.number().min(0).default(0),
+  area: z.coerce.number().positive(),
+  // FormData sends repeated keys as array, single key as string — normalize both
+  features: z.preprocess(
+    (v) => (Array.isArray(v) ? v : v ? [v] : []),
+    z.array(z.string())
+  ).default([]),
   videoUrl: z.string().url().optional(),
-  isFeatured: z.boolean().default(false),
+  // FormData sends booleans as the string "true"/"false"
+  isFeatured: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 });
 
 export const updatePropertySchema = createPropertySchema.partial();
