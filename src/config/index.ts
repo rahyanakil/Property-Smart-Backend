@@ -5,6 +5,7 @@ export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+  serverUrl: process.env.SERVER_URL || 'http://localhost:5000',
 
   jwt: {
     secret: process.env.JWT_SECRET || 'fallback_secret_change_in_production',
